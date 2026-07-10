@@ -1063,6 +1063,17 @@ main() {
             handle_foreign_panel || exit 0
         fi
         select_and_install
+        # После успешной чистой установки сразу открываем меню управления —
+        # чтобы `curl … | sudo bash` привёл пользователя в меню без ручного `govless`.
+        if is_xui_installed && [ -f "$GOVLESS_CONFIG" ]; then
+            echo ""
+            log_info "$(t menu_opening)"
+            sleep 2
+            load_credentials 2>/dev/null || true
+            setup_api_base 2>/dev/null || true
+            set +e
+            main_menu
+        fi
     fi
 }
 

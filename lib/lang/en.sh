@@ -75,6 +75,7 @@ I18N[menu_users]="Users            ▸"
 I18N[menu_stats]="Statistics       ▸"
 I18N[menu_manage]="Management       ▸"
 I18N[menu_about]="About            ▸"
+I18N[menu_opening]="Opening the management menu…"
 I18N[auto_refresh_30s]="Refresh in 30 sec"
 
 # ── Status dashboard ───────────────────────────────────────────────────
