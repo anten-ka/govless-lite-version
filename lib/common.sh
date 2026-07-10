@@ -8,7 +8,7 @@
 # Colors, logging, spinner, apt handling, IP/geo detection, JSON config
 
 # ── Version & paths ─────────────────────────────────────────────────────
-GOVLESS_VERSION="1.1-lite-club"
+GOVLESS_VERSION="1.2-lite-club"
 GOVLESS_SCHEMA="1"
 GOVLESS_DIR="${GOVLESS_DIR:-/opt/govless}"
 GOVLESS_CONFIG="${GOVLESS_CONFIG:-${GOVLESS_DIR}/config.json}"

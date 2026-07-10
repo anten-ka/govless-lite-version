@@ -163,6 +163,7 @@ install_lite() {
     config_set "server_ip" "$server_ip"
     config_set "transport" "$XUI_TRANSPORT"
     config_set "fingerprint" "$XUI_FP"
+    config_set fp_offer_done "1"   # fresh install already chose fp — skip the post-update offer
     config_set "xui_branch" "$XUI_BRANCH"
     [ -n "$XUI_INSTALL_VERSION" ] && config_set "xui_version" "$XUI_INSTALL_VERSION"
     config_set_int "port" 443
@@ -954,6 +955,66 @@ select_and_install() {
 # ═══════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# ── One-time fingerprint-change offer on update (Pro + subscription) ────
+# The fp picker was reordered and now recommends `safari` (fixed = faster/more
+# stable) over the old `randomized` default. A Pro user on a subscription can
+# switch seamlessly (devices just refresh the sub). Offer it once: explain the
+# trade-off, warn that after the change they must refresh the subscription on
+# devices (or, if they handed out a raw key, re-scan it / set the fp in the
+# client app), then ask. Gated so it never nags: fires only for Pro-with-
+# subscription that predates the choice, and records fp_offer_done afterwards.
+# (In this edition Pro is Anten-ka Club-gated, so Lite installs never see it.)
+maybe_offer_fingerprint_change() {
+    local mode domain sub_port sub_path cur_fp done_flag
+    mode="$(config_get mode "lite")"
+    domain="$(config_get domain "")"
+    [ "$mode" = "pro" ] && [ -n "$domain" ] || return 0
+    sub_port="$(config_get sub_port "")"
+    sub_path="$(config_get sub_path "")"
+    [ -n "$sub_port" ] || [ -n "$sub_path" ] || return 0
+    done_flag="$(config_get fp_offer_done "")"
+    [ -n "$done_flag" ] && return 0
+    cur_fp="$(config_get fingerprint "safari")"
+    if [ "$cur_fp" = "safari" ]; then
+        config_set fp_offer_done "1"
+        return 0
+    fi
+
+    print_header "$(t fp_offer_title)"
+    echo -e "  $(tf fp_offer_intro "$cur_fp")" >&2
+    echo "" >&2
+    echo -e "  $(t fp_offer_explain1)" >&2
+    echo -e "  $(t fp_offer_explain2)" >&2
+    echo "" >&2
+    echo -e "  ${YELLOW}${BOLD}$(t fp_offer_warn_title)${NC}" >&2
+    echo -e "  $(t fp_offer_warn_sub)" >&2
+    echo -e "  $(t fp_offer_warn_key)" >&2
+    echo "" >&2
+    echo -ne "  $(t fp_offer_prompt) " >&2
+    local ans; read -r ans || true
+    case "$ans" in
+        y|Y|yes|Yes|YES|д|Д|да|Да|ДА)
+            select_fingerprint
+            log_info "$(t fp_offer_applying)"
+            if apply_fingerprint_to_inbounds "$XUI_FP"; then
+                echo "" >&2
+                echo -e "  ${GREEN}${BOLD}$(t fp_offer_after_title)${NC}" >&2
+                echo -e "  ${GREEN}$(t fp_offer_warn_sub)${NC}" >&2
+                echo -e "  ${GREEN}$(t fp_offer_warn_key)${NC}" >&2
+            else
+                log_warning "$(t fp_offer_failed)"
+            fi
+            ;;
+        *)
+            log_info "$(t fp_offer_skipped)"
+            ;;
+    esac
+    config_set fp_offer_done "1"
+    echo -ne "  $(t press_enter_return) " >&2
+    read -r _ || true
+}
+
 main() {
     # `curl ... | bash` puts the SCRIPT on stdin, so interactive `read` prompts
     # hit EOF and every gate "declines" no matter what the user types. If stdin
@@ -992,6 +1053,7 @@ main() {
         # user from the menu to the shell. The install flow guards its own steps.
         set +e
         maybe_run_migrations
+        maybe_offer_fingerprint_change
         main_menu
     else
         # First run. If a foreign 3X-UI panel is already here, offer the panel

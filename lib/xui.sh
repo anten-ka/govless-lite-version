@@ -17,7 +17,7 @@ XUI_LEGACY_FALLBACK="v2.9.4"  # hardcoded fallback if GitHub API unreachable
 
 # ── Transport globals ──────────────────────────────────────────────────
 XUI_TRANSPORT="tcp"    # "tcp", "xhttp", or "grpc"
-XUI_FP="${GOVLESS_FP:-randomized}"   # uTLS fingerprint: randomized(default)/chrome/firefox/safari/ios/random
+XUI_FP="${GOVLESS_FP:-safari}"   # uTLS fingerprint: safari(default)/firefox/random/randomized/chrome/ios/android/edge
 
 # ── Get latest 2.x version from GitHub API ─────────────────────────────
 get_latest_2x_version() {
@@ -138,10 +138,13 @@ select_xui_version() {
 
 # ── Interactive transport picker (Lite mode only) ──────────────────────
 # ── uTLS fingerprint picker ─────────────────────────────────────────────
-# Sets the client TLS fingerprint baked into every key (fp=...). randomized is
-# the default (a fresh random fingerprint, hardest to fingerprint-block); chrome
-# /firefox/safari mimic a specific browser. random picks a real one at random
-# in the rare case DPI blocks a specific fingerprint.
+# Sets the client TLS fingerprint baked into every key (fp=...). List order = our
+# recommendation, top → bottom. safari (default) is a FIXED fingerprint: fastest &
+# most stable to connect, but more detectable to long-term traffic surveillance.
+# firefox — same trade-off, another fixed browser. random picks a REAL browser
+# fingerprint at random. randomized is the stealthiest (a fresh synthetic
+# fingerprint) but some clients don't support it. chrome is the most common →
+# the most targeted, hence the least reliable.
 select_fingerprint() {
     # honour non-interactive override
     case "${GOVLESS_FP:-}" in
@@ -150,23 +153,89 @@ select_fingerprint() {
     echo "" >&2
     echo -e "  ${BOLD}${WHITE}$(t fp_title)${NC}" >&2
     echo -e "  ${DIM}$(printf '─%.0s' {1..55})${NC}" >&2
-    echo -e "  ${CYAN}1)${NC} ${BOLD}randomized${NC} — $(t fp_randomized)" >&2
-    echo -e "  ${CYAN}2)${NC} chrome — $(t fp_chrome)" >&2
-    echo -e "  ${CYAN}3)${NC} firefox" >&2
-    echo -e "  ${CYAN}4)${NC} safari" >&2
-    echo -e "  ${CYAN}5)${NC} random — $(t fp_random)" >&2
+    echo -e "  ${CYAN}1)${NC} ${BOLD}safari${NC} — $(t fp_safari)" >&2
+    echo -e "  ${CYAN}2)${NC} firefox — $(t fp_firefox)" >&2
+    echo -e "  ${CYAN}3)${NC} random — $(t fp_random)" >&2
+    echo -e "  ${CYAN}4)${NC} randomized — $(t fp_randomized)" >&2
+    echo -e "  ${CYAN}5)${NC} chrome — $(t fp_chrome)" >&2
     echo "" >&2
     local choice
     echo -ne "  $(t fp_choice) " >&2
     read -r choice
     case "$choice" in
-        2) XUI_FP="chrome" ;;
-        3) XUI_FP="firefox" ;;
-        4) XUI_FP="safari" ;;
-        5) XUI_FP="random" ;;
-        *) XUI_FP="randomized" ;;
+        2) XUI_FP="firefox" ;;
+        3) XUI_FP="random" ;;
+        4) XUI_FP="randomized" ;;
+        5) XUI_FP="chrome" ;;
+        *) XUI_FP="safari" ;;
     esac
     log_success "$(tf fp_selected "$XUI_FP")" >&2
+}
+
+# ── Change the uTLS fingerprint of EXISTING inbounds (post-install) ──────
+# Patches realitySettings.settings.fingerprint / tlsSettings.settings.fingerprint
+# in x-ui.db for every VLESS inbound that carries one, persists config.fingerprint,
+# refreshes the SSH-side link/QR cache, and restarts x-ui so the subscription and
+# any generated keys immediately use the new fp.
+# Usage: apply_fingerprint_to_inbounds <new_fp>   (echoes count of patched inbounds)
+apply_fingerprint_to_inbounds() {
+    local new_fp="$1"
+    case "$new_fp" in
+        chrome|firefox|safari|ios|android|edge|random|randomized) : ;;
+        *) log_error "Invalid fingerprint: $new_fp"; return 1 ;;
+    esac
+    [ -f "$XUI_DB" ] || { log_error "x-ui.db not found ($XUI_DB)"; return 1; }
+    command -v python3 >/dev/null 2>&1 || { log_error "python3 required"; return 1; }
+
+    local changed
+    changed=$(python3 - "$XUI_DB" "$new_fp" <<'PYEOF'
+import sqlite3, json, sys
+db, new_fp = sys.argv[1], sys.argv[2]
+conn = sqlite3.connect(db)
+conn.execute("PRAGMA busy_timeout = 5000")
+n = 0
+try:
+    conn.execute("BEGIN IMMEDIATE")
+    rows = conn.execute("SELECT id, stream_settings FROM inbounds").fetchall()
+    for iid, ss in rows:
+        if not ss:
+            continue
+        try:
+            st = json.loads(ss)
+        except Exception:
+            continue
+        touched = False
+        for key in ("realitySettings", "tlsSettings"):
+            node = st.get(key)
+            if isinstance(node, dict):
+                settings = node.get("settings")
+                if isinstance(settings, dict) and "fingerprint" in settings:
+                    if settings.get("fingerprint") != new_fp:
+                        settings["fingerprint"] = new_fp
+                        touched = True
+        if touched:
+            conn.execute("UPDATE inbounds SET stream_settings = ? WHERE id = ?",
+                         (json.dumps(st), iid))
+            n += 1
+    conn.commit()
+except Exception as e:
+    conn.rollback()
+    sys.stderr.write("ERR:%s\n" % e)
+    sys.exit(1)
+finally:
+    conn.close()
+print(n)
+PYEOF
+    ) || { log_error "Failed to patch inbound fingerprints in x-ui.db"; return 1; }
+
+    config_set "fingerprint" "$new_fp"
+    export XUI_FP="$new_fp"
+    if declare -F regenerate_links_from_db >/dev/null 2>&1; then
+        regenerate_links_from_db >/dev/null 2>&1 || true
+    fi
+    systemctl restart x-ui 2>/dev/null || true
+    log_success "$(tf fp_applied "$new_fp" "${changed:-0}")"
+    return 0
 }
 
 select_transport() {

@@ -181,14 +181,14 @@ api_create_reality_inbound() {
     [ -n "$REALITY_PUBLIC_KEY" ] || { log_error "Reality public key not set"; return 1; }
 
     # Build the payload using Python (injection-safe)
-    if ! python3 - "$mask_domain" "$REALITY_PRIVATE_KEY" "$REALITY_PUBLIC_KEY" "$transport" "${XUI_FP:-chrome}" << 'PYEOF'
+    if ! python3 - "$mask_domain" "$REALITY_PRIVATE_KEY" "$REALITY_PUBLIC_KEY" "$transport" "${XUI_FP:-safari}" << 'PYEOF'
 import json, sys
 
 mask_domain = sys.argv[1]
 private_key = sys.argv[2]
 public_key = sys.argv[3]
 transport = sys.argv[4]
-fp = sys.argv[5] if len(sys.argv) > 5 else "chrome"
+fp = sys.argv[5] if len(sys.argv) > 5 else "safari"
 
 with open('/tmp/govless_clients.json') as f:
     clients = json.load(f)
@@ -314,14 +314,14 @@ api_create_tls_inbound() {
     [ -f /tmp/govless_clients.json ] || { log_error "Clients file not found"; return 1; }
 
     local transport="${XUI_TRANSPORT:-tcp}"
-    if ! python3 - "$domain" "$cert_file" "$key_file" "$transport" "${XUI_FP:-chrome}" << 'PYEOF'
+    if ! python3 - "$domain" "$cert_file" "$key_file" "$transport" "${XUI_FP:-safari}" << 'PYEOF'
 import json, sys
 
 domain = sys.argv[1]
 cert_file = sys.argv[2]
 key_file = sys.argv[3]
 transport = sys.argv[4]
-fp = sys.argv[5] if len(sys.argv) > 5 else "chrome"
+fp = sys.argv[5] if len(sys.argv) > 5 else "safari"
 
 with open('/tmp/govless_clients.json') as f:
     clients = json.load(f)
@@ -507,7 +507,7 @@ generate_vless_link_reality() {
     local encoded_name
     encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
 
-    local params="encryption=none&type=${transport}&security=reality&pbk=${public_key}&fp=${XUI_FP:-chrome}&sni=${mask_domain}&sid=${short_id}&spx=%2F"
+    local params="encryption=none&type=${transport}&security=reality&pbk=${public_key}&fp=${XUI_FP:-safari}&sni=${mask_domain}&sid=${short_id}&spx=%2F"
     if [ "$transport" = "tcp" ]; then
         params="${params}&flow=xtls-rprx-vision"
     elif [ "$transport" = "grpc" ]; then
@@ -528,7 +528,7 @@ generate_vless_link_tls() {
     local encoded_name
     encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
 
-    local params="encryption=none&type=${transport}&security=tls&sni=${domain}&fp=${XUI_FP:-chrome}"
+    local params="encryption=none&type=${transport}&security=tls&sni=${domain}&fp=${XUI_FP:-safari}"
     if [ "$transport" = "tcp" ]; then
         params="${params}&alpn=http%2F1.1&flow=xtls-rprx-vision"
     elif [ "$transport" = "grpc" ]; then
@@ -569,7 +569,7 @@ print(sids[0] if sids else '')
 
     # Generate links
     local transport="${XUI_TRANSPORT:-tcp}"
-    if ! python3 - "$mode" "$server" "$mask_domain" "${REALITY_PUBLIC_KEY:-}" "$short_id" "$transport" "${XUI_FP:-chrome}" << 'PYEOF'
+    if ! python3 - "$mode" "$server" "$mask_domain" "${REALITY_PUBLIC_KEY:-}" "$short_id" "$transport" "${XUI_FP:-safari}" << 'PYEOF'
 import json, sys
 from urllib.parse import quote
 
@@ -579,7 +579,7 @@ mask_domain = sys.argv[3]
 public_key = sys.argv[4]
 short_id = sys.argv[5]
 transport = sys.argv[6]
-fp = sys.argv[7] if len(sys.argv) > 7 else "chrome"
+fp = sys.argv[7] if len(sys.argv) > 7 else "safari"
 
 with open('/tmp/govless_users_map.json') as f:
     users = json.load(f)
@@ -714,7 +714,7 @@ if not rows:
 quote = lambda x: urllib.parse.quote(str(x))
 try:
     _cfg = json.load(open("/opt/govless/config.json"))
-    fp = _cfg.get("fingerprint") or "chrome"
+    fp = _cfg.get("fingerprint") or "safari"
 except Exception:
     fp = "chrome"
 links = {}
