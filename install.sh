@@ -2,14 +2,14 @@
 # goVLESS Lite — установщик (VLESS + Reality, маскировка под сайт, без домена).
 #
 # Установка одной командой:
-#   sudo bash <(curl -sSL https://raw.githubusercontent.com/anten-ka/govless-lite-version/main/install.sh)
+#   curl -fsSL https://raw.githubusercontent.com/anten-ka/govless-lite-version/main/install.sh | sudo bash
 #
 # Copyright (c) 2025-2026 anten-ka. Licensed under the goVLESS Source-Available License.
 set -uo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Ошибка: запустите через sudo." >&2
-    echo "  sudo bash <(curl -sSL https://raw.githubusercontent.com/anten-ka/govless-lite-version/main/install.sh)" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/anten-ka/govless-lite-version/main/install.sh | sudo bash" >&2
     exit 1
 fi
 
