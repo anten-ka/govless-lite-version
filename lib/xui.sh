@@ -1444,7 +1444,9 @@ _govless_issue_panel_cert() {
     fi
 
     # Install socat for standalone mode
-    command -v socat >/dev/null 2>&1 || apt-get install -y -qq socat >/dev/null 2>&1 || return 1
+    if ! command -v socat >/dev/null 2>&1; then
+        apt_install socat || { log_dim "socat unavailable (apt lock?) — skipping LE panel cert, using self-signed"; return 1; }
+    fi
 
     # Free port 80 for HTTP-01 challenge: stop nginx temporarily
     local nginx_was_running=false

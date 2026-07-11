@@ -301,7 +301,7 @@ apt_install() {
 }
 
 # ── Dependency management ───────────────────────────────────────────────
-CRITICAL_DEPS=(curl jq openssl qrencode sqlite3 python3)
+CRITICAL_DEPS=(curl jq openssl qrencode sqlite3 python3 socat)
 OPTIONAL_DEPS=(git nginx certbot file expect dnsutils)
 
 install_dependencies() {
