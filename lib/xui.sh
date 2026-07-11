@@ -575,50 +575,72 @@ extract_credentials() {
     local install_log="${1:-/tmp/govless_xui_install.log}"
     local username="" password="" port="" web_path=""
 
-    # Method 1: parse install log
-    # v3.x format: "Username:    tiwcBwDS1y" (with ANSI color codes)
-    # v2.x format: "username: admin"
-    # Strip ANSI codes first, then parse case-insensitively
-    # NOTE: avoid grep -P (PCRE) — variable-length lookbehinds fail on some systems
-    if [ -f "$install_log" ]; then
+    # Method 0 (highest priority): an existing creds file holds the REAL panel
+    # login PLAINTEXT. 3X-UI v3.x stores only a bcrypt hash in x-ui.db, which is
+    # NOT the login secret — so once we have a good plaintext, keep it and NEVER
+    # clobber it by re-reading the DB on an update / re-install-over-existing.
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        local _l _k _v
+        while IFS= read -r _l || [ -n "$_l" ]; do
+            case "$_l" in ''|'#'*) continue ;; esac
+            _k="${_l%%=*}"; _v="${_l#*=}"
+            if [ "${_v#\'}" != "$_v" ] && [ "${_v%\'}" != "$_v" ]; then _v="${_v#\'}"; _v="${_v%\'}";
+            elif [ "${_v#\"}" != "$_v" ] && [ "${_v%\"}" != "$_v" ]; then _v="${_v#\"}"; _v="${_v%\"}"; fi
+            case "$_k" in USERNAME) username="$_v" ;; PASSWORD) password="$_v" ;; PORT) port="$_v" ;; WEB_PATH) web_path="$_v" ;; esac
+        done < "$CREDENTIALS_FILE"
+    fi
+    case "$password" in '$2a$'*|'$2b$'*|'$2y$'*) password="" ;; esac
+
+    if [ -f "$install_log" ] && { [ -z "$username" ] || [ -z "$password" ]; }; then
         local clean_log
         clean_log=$(sed 's/\x1b\[[0-9;]*m//g' "$install_log" 2>/dev/null) || true
-        username=$(echo "$clean_log" | grep -i 'username:' | tail -1 | sed 's/.*[Uu]sername:[[:space:]]*//' | tr -d '[:space:]') || true
-        password=$(echo "$clean_log" | grep -i 'password:' | tail -1 | sed 's/.*[Pp]assword:[[:space:]]*//' | tr -d '[:space:]') || true
-        port=$(echo "$clean_log" | grep -i 'port:' | grep -v 'webbasepath\|WebBasePath' | tail -1 | sed 's/.*[Pp]ort:[[:space:]]*//' | tr -d '[:space:]') || true
-        web_path=$(echo "$clean_log" | grep -i 'webbasepath:' | tail -1 | sed 's/.*[Ww]eb[Bb]ase[Pp]ath:[[:space:]]*//' | tr -d '[:space:]') || true
+        [ -z "$username" ] && username=$(echo "$clean_log" | grep -i 'username:' | tail -1 | sed 's/.*[Uu]sername:[[:space:]]*//' | tr -d '[:space:]') || true
+        [ -z "$password" ] && password=$(echo "$clean_log" | grep -i 'password:' | tail -1 | sed 's/.*[Pp]assword:[[:space:]]*//' | tr -d '[:space:]') || true
+        [ -z "$port" ] && port=$(echo "$clean_log" | grep -i 'port:' | grep -v 'webbasepath\|WebBasePath' | tail -1 | sed 's/.*[Pp]ort:[[:space:]]*//' | tr -d '[:space:]') || true
+        [ -z "$web_path" ] && web_path=$(echo "$clean_log" | grep -i 'webbasepath:' | tail -1 | sed 's/.*[Ww]eb[Bb]ase[Pp]ath:[[:space:]]*//' | tr -d '[:space:]') || true
     fi
 
-    # Method 2: fallback to sqlite
-    if { [ -z "$username" ] || [ -z "$password" ]; } && [ -f "$XUI_DB" ] && command -v sqlite3 &>/dev/null; then
-        username=$(sqlite3 "$XUI_DB" "SELECT username FROM users LIMIT 1;" 2>/dev/null)
-        password=$(sqlite3 "$XUI_DB" "SELECT password FROM users LIMIT 1;" 2>/dev/null)
+    if [ -f "$XUI_DB" ] && command -v sqlite3 &>/dev/null; then
+        [ -z "$username" ] && username=$(sqlite3 "$XUI_DB" "SELECT username FROM users LIMIT 1;" 2>/dev/null)
+        if [ -z "$password" ]; then
+            local _dbpass
+            _dbpass=$(sqlite3 "$XUI_DB" "SELECT password FROM users LIMIT 1;" 2>/dev/null)
+            case "$_dbpass" in
+                '$2a$'*|'$2b$'*|'$2y$'*|'') : ;;
+                *) password="$_dbpass" ;;
+            esac
+        fi
+        [ -z "$port" ] && port=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webPort';" 2>/dev/null)
+        [ -z "$web_path" ] && web_path=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webBasePath';" 2>/dev/null)
     fi
 
-    # Port from sqlite
-    if [ -z "$port" ] && [ -f "$XUI_DB" ] && command -v sqlite3 &>/dev/null; then
-        port=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webPort';" 2>/dev/null)
-    fi
-
-    # Web base path from sqlite
-    if [ -z "$web_path" ] && [ -f "$XUI_DB" ] && command -v sqlite3 &>/dev/null; then
-        web_path=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webBasePath';" 2>/dev/null)
-    fi
-
-    # Defaults
     [ -z "$username" ] && username="admin"
     [ -z "$password" ] && password="admin"
     [ -z "$port" ] && port="2053"
     [ -z "$web_path" ] && web_path="/"
 
-    # Save to globals
     XUI_USER="$username"
     XUI_PASS="$password"
     XUI_PORT="$port"
     XUI_WEB_PATH="$web_path"
-
-    # Normalize web_path: ensure leading /
     [[ "$XUI_WEB_PATH" != /* ]] && XUI_WEB_PATH="/${XUI_WEB_PATH}"
+    return 0
+}
+
+# ── Recover panel login when api_login fails on an existing 3X-UI ─────────
+recover_panel_login() {
+    local u p bin
+    bin="${XUI_BIN:-}"; [ -x "$bin" ] || bin="$(command -v x-ui 2>/dev/null || echo /usr/local/x-ui/x-ui)"
+    [ -x "$bin" ] || return 1
+    u=$(tr -dc 'a-zA-Z0-9' < /dev/urandom 2>/dev/null | head -c 10)
+    p=$(tr -dc 'a-zA-Z0-9' < /dev/urandom 2>/dev/null | head -c 12)
+    [ -n "$u" ] && [ -n "$p" ] || return 1
+    log_info "$(t creds_resetting)"
+    "$bin" setting -username "$u" -password "$p" >/dev/null 2>&1 || return 1
+    systemctl restart x-ui 2>/dev/null || true
+    XUI_USER="$u"; XUI_PASS="$p"
+    save_credentials
+    wait_for_api 60 >/dev/null 2>&1 || sleep 3
     return 0
 }
 

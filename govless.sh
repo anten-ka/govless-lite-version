@@ -125,6 +125,8 @@ install_lite() {
     # 10. Wait for API & login
     if run_with_spinner "$(t api_waiting)" wait_for_api 90 && api_login_with_retry; then
         :  # API ready — language set earlier via configure_panel_tls (sqlite)
+    elif recover_panel_login && api_login_with_retry; then
+        log_success "$(t creds_recovered)"
     else
         log_warning "$(t api_login_fail_manual)"
         auto_ok=false
