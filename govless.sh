@@ -36,11 +36,22 @@ fi
 
 # ── Detect or pick language ─────────────────────────────────────────────
 init_language() {
-    local lang
+    local lang picked=""
     lang=$(detect_language)
     if [ "$lang" = "en" ] && [ ! -f "${GOVLESS_DIR}/.language" ]; then
-        # First run — ask user
-        lang=$(pick_language_interactive)
+        # First run — ask user. Persist the choice ONLY if the user actually made
+        # one; on an empty/EOF read (broken tty) keep English for THIS run but do
+        # NOT save it, so the next run asks again (fixes the "sticky en" bug).
+        picked=$(pick_language_interactive)
+        if [ -n "$picked" ]; then
+            lang="$picked"
+            load_language "$lang"
+            save_language "$lang"
+        else
+            load_language "$lang"
+        fi
+        init_state_db 2>/dev/null || true
+        return 0
     fi
     load_language "$lang"
     save_language "$lang"
@@ -1031,6 +1042,12 @@ main() {
     init_language
     print_banner
 
+    # Чистая установка требует современную ОС; обновление уже установленного
+    # goVLESS не блокируется (старые ОС продолжают получать фиксы).
+    if ! { is_xui_installed && [ -f "$GOVLESS_CONFIG" ]; }; then
+        require_fresh_os
+    fi
+
     # Check disk space
     if ! check_disk_space 500; then
         local avail
@@ -1056,6 +1073,16 @@ main() {
         set +e
         maybe_run_migrations
         maybe_offer_fingerprint_change
+        # Если порт 443 занимает чужой сервис (goTelegram/telemt и т.п.) — предупредить:
+        # xray и он дерутся за порт, поэтому VPN работает нестабильно.
+        if ! detect_443_conflict; then
+            if [ "$GV_443_KIND" = "listener" ]; then
+                log_warning "$(tf port443_warn_listener "$GV_443_CONFLICT")"
+            else
+                log_warning "$(tf port443_warn_service "$GV_443_CONFLICT")"
+            fi
+            sleep 2
+        fi
         main_menu
     else
         # First run. If a foreign 3X-UI panel is already here, offer the panel
@@ -1063,6 +1090,19 @@ main() {
         # install on top (which cannot auto-configure someone else's panel).
         if is_xui_installed; then
             handle_foreign_panel || exit 0
+        fi
+        # Откажемся ставить, если порт 443 занят другим сервисом
+        # (goTelegram/telemt и т.п.) — вместе с ним goVLESS работать не будет.
+        if ! detect_443_conflict; then
+            print_header "$(t port443_title)"
+            if [ "$GV_443_KIND" = "listener" ]; then
+                log_error "$(tf port443_listener "$GV_443_CONFLICT")"
+            else
+                log_error "$(tf port443_service "$GV_443_CONFLICT")"
+            fi
+            echo "" >&2
+            echo -e "  $(t port443_hint)" >&2
+            exit 1
         fi
         select_and_install
         # После успешной чистой установки сразу открываем меню управления —

@@ -110,6 +110,6 @@ pick_language_interactive() {
     case "$ch" in
         1|en|EN|english|English) echo "en" ;;
         2|ru|RU|русский|Русский) echo "ru" ;;
-        *) echo "en" ;;
+        *) echo "" ;;   # пустой/невалидный ввод = НЕТ выбора (не сохраняем язык)
     esac
 }

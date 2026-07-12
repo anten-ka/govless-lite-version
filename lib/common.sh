@@ -8,7 +8,7 @@
 # Colors, logging, spinner, apt handling, IP/geo detection, JSON config
 
 # ── Version & paths ─────────────────────────────────────────────────────
-GOVLESS_VERSION="1.3.1"
+GOVLESS_VERSION="1.3.2"
 GOVLESS_SCHEMA="1"
 GOVLESS_DIR="${GOVLESS_DIR:-/opt/govless}"
 GOVLESS_CONFIG="${GOVLESS_CONFIG:-${GOVLESS_DIR}/config.json}"
@@ -301,6 +301,56 @@ apt_install() {
 }
 
 # ── Dependency management ───────────────────────────────────────────────
+# ── Preflight gate: clean install needs a modern OS ─────────────────────
+# Updates of an already-installed goVLESS are never blocked. Override: GOVLESS_ALLOW_OLD_OS=1
+require_fresh_os() {
+    [ "${GOVLESS_ALLOW_OLD_OS:-0}" = "1" ] && return 0
+    [ -f /etc/os-release ] || return 0
+    local _id _ver _pretty _ok=1
+    _id=$(. /etc/os-release 2>/dev/null && echo "${ID:-}")
+    _ver=$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-0}")
+    _pretty=$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-${_id} ${_ver}}")
+    case "$_id" in
+        ubuntu) awk -v v="$_ver" 'BEGIN{exit !(v+0 >= 24.04)}' || _ok=0 ;;
+        debian) awk -v v="$_ver" 'BEGIN{exit !(v+0 >= 12)}'    || _ok=0 ;;
+        *)      _ok=1 ;;
+    esac
+    [ "$_ok" = 1 ] && return 0
+    print_header "$(t os_too_old_title)"
+    log_error "$(tf os_too_old_cur "$_pretty")"
+    echo "" >&2
+    echo -e "  $(t os_too_old_why1)" >&2
+    echo -e "  $(t os_too_old_why2)" >&2
+    echo "" >&2
+    echo -e "  ${YELLOW}${BOLD}$(t os_too_old_action)${NC}" >&2
+    echo -e "  ${DIM}$(t os_too_old_update_ok)${NC}" >&2
+    exit 1
+}
+
+# ── Preflight gate: port 443 must be free of foreign services ───────────
+# goVLESS serves VLESS on :443; a foreign :443 listener or TG-proxy unit
+# conflicts. Sets GV_443_CONFLICT / GV_443_KIND; returns 1. Override: GOVLESS_ALLOW_443_CONFLICT=1
+GV_443_CONFLICT=""
+GV_443_KIND=""
+detect_443_conflict() {
+    GV_443_KIND=""
+    GV_443_CONFLICT=""
+    [ "${GOVLESS_ALLOW_443_CONFLICT:-0}" = "1" ] && return 0
+    local _units _foreign
+    _units=$(systemctl list-unit-files --type=service --no-legend 2>/dev/null \
+        | awk '{print $1}' | grep -iE '^(telemt|gotelegram|mtg|mtproto|mtprotoproxy)' | sort -u | tr '\n' ' ')
+    _foreign=$(ss -H -ltnp 2>/dev/null | awk '$4 ~ /:443$/{print}' \
+        | grep -oE '"[^"]+"' | tr -d '"' | grep -viE '^xray' | sort -u | tr '\n' ' ')
+    _units=$(echo "$_units" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+    _foreign=$(echo "$_foreign" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+    if [ -n "$_foreign" ]; then
+        GV_443_CONFLICT="$_foreign"; GV_443_KIND="listener"; return 1
+    elif [ -n "$_units" ]; then
+        GV_443_CONFLICT="$_units"; GV_443_KIND="service"; return 1
+    fi
+    return 0
+}
+
 CRITICAL_DEPS=(curl jq openssl qrencode sqlite3 python3 socat)
 OPTIONAL_DEPS=(git nginx certbot file expect dnsutils)
 

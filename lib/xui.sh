@@ -313,6 +313,13 @@ install_3xui() {
         return 0
     fi
 
+    # FRESH install path (3X-UI is NOT already installed): a stale creds file /
+    # install log left over from a PREVIOUS install would make extract_credentials
+    # pick the OLD panel port/path — dead after this re-install — so wipe them and
+    # stop the phase-A daemon (its auto-recover could re-create a stale creds file).
+    systemctl stop govlessctl govless-bot 2>/dev/null || true
+    rm -f "$CREDENTIALS_FILE" /tmp/govless_xui_install.log /tmp/govless_xui_install*.log 2>/dev/null || true
+
     # Clean up orphaned binary if service is missing
     if [ -f "$XUI_BIN" ] && ! systemctl is-enabled "$XUI_SERVICE" &>/dev/null; then
         log_dim "Cleaning up incomplete previous installation..."
@@ -610,8 +617,13 @@ extract_credentials() {
                 *) password="$_dbpass" ;;
             esac
         fi
-        [ -z "$port" ] && port=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webPort';" 2>/dev/null)
-        [ -z "$web_path" ] && web_path=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webBasePath';" 2>/dev/null)
+        # The LIVE panel port / webBasePath are authoritative — a stale creds file
+        # (from a previous install) must NOT override the port the panel now uses.
+        local _dbport _dbpath
+        _dbport=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webPort';" 2>/dev/null)
+        _dbpath=$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='webBasePath';" 2>/dev/null)
+        [ -n "$_dbport" ] && port="$_dbport"
+        [ -n "$_dbpath" ] && web_path="$_dbpath"
     fi
 
     [ -z "$username" ] && username="admin"
@@ -1498,7 +1510,7 @@ _govless_issue_panel_cert() {
 # nothing in goVLESS reflects it" complaint. Does NOT touch user data
 # (clients, traffic, admins) — only the derived/cached state.
 repair_user_facing() {
-    log_step "Repairing goVLESS state..."
+    log_step "$(t repair_start)"
 
     # 1. Force re-detect public IP (ignore whatever's in config — may be stale)
     local fresh_ip cur_ip
@@ -1506,19 +1518,19 @@ repair_user_facing() {
     fresh_ip=$(get_server_ip 2>/dev/null)
     if [ -n "$fresh_ip" ] && _valid_ip "$fresh_ip"; then
         if [ "$fresh_ip" != "$cur_ip" ]; then
-            log_info "IP changed: ${cur_ip:-<none>} → ${fresh_ip}"
+            log_info "$(tf repair_ip_changed "${cur_ip:-<none>}" "${fresh_ip}")"
             config_set "server_ip" "$fresh_ip"
         else
-            log_info "IP unchanged: ${fresh_ip}"
+            log_info "$(tf repair_ip_same "${fresh_ip}")"
         fi
     else
-        log_warning "Could not auto-detect public IP — set it manually with: govlessctl-fix-ip <ip>"
+        log_warning "$(t repair_ip_fail)"
     fi
 
     # 2. Ensure subscription server is enabled with random port + path
     if command -v sqlite3 >/dev/null 2>&1 && [ -f "$XUI_DB" ]; then
         if configure_sub_server; then
-            systemctl restart x-ui 2>/dev/null || log_warning "Could not restart x-ui after sub-server repair"
+            systemctl restart x-ui 2>/dev/null || log_warning "$(t repair_restart_fail)"
             sleep 2
         fi
     fi
@@ -1528,12 +1540,12 @@ repair_user_facing() {
         local link_count sub_count
         link_count=$(python3 -c "import json; print(len(json.load(open('/tmp/govless_links.json'))))" 2>/dev/null || echo "0")
         sub_count=$(python3 -c "import json; print(len(json.load(open('/tmp/govless_subs.json'))))" 2>/dev/null || echo "0")
-        log_success "Links: ${link_count}, subscription URLs: ${sub_count}"
+        log_success "$(tf repair_links "${link_count}" "${sub_count}")"
     else
-        log_error "Failed to regenerate links from x-ui.db"
+        log_error "$(t repair_regen_fail)"
         return 1
     fi
 
-    log_success "Repair complete. Try (2) Users → (3) Show QR to verify."
+    log_success "$(t repair_done)"
     return 0
 }
