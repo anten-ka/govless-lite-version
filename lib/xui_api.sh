@@ -471,7 +471,7 @@ for name in names:
         "totalGB": 0,
         "expiryTime": 0,
         "enable": True,
-        "tgId": "",
+        "tgId": 0,
         "subId": client_id,
         "comment": f"goVLESS user {name}",
         "reset": 0
