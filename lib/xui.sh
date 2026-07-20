@@ -302,6 +302,23 @@ _is_gzip() {
     [ "$magic" = "1f8b" ]
 }
 
+# ── govless shortcut ──────────────────────────────────────────────────
+# Always (re)point /usr/local/bin/govless at the CURRENTLY running code. Called
+# early from main() so a reinstall/update over an OLDER version can never leave
+# `govless` aimed at a stale path. Must NOT live inside install_3xui() — that
+# short-circuits (return 0) when the panel already exists, i.e. exactly the
+# reinstall case this needs to cover.
+install_govless_shortcut() {
+    [ "$(id -u)" = "0" ] || return 0
+    local _self="${SCRIPT_DIR:-/opt/govless-installer}/govless.sh"
+    [ -f "$_self" ] || return 0
+    cat > /usr/local/bin/govless << goVLESSEOF
+#!/bin/bash
+exec bash "${_self}" "\$@"
+goVLESSEOF
+    chmod +x /usr/local/bin/govless 2>/dev/null || true
+}
+
 install_3xui() {
     local version="${1:-$XUI_INSTALL_VERSION}"
     log_step "$(t xui_installing)"
@@ -555,13 +572,7 @@ MGMTEOF
     # Install govless convenience command
     # Всегда обновляем ярлык на ТЕКУЩИЙ код — иначе при переустановке поверх
     # старой версии `govless` продолжал бы указывать на старый путь/код.
-    if [ -f "${SCRIPT_DIR:-/opt/govless-installer}/govless.sh" ]; then
-        cat > /usr/local/bin/govless << goVLESSEOF
-#!/bin/bash
-exec bash "${SCRIPT_DIR:-/opt/govless-installer}/govless.sh" "\$@"
-goVLESSEOF
-        chmod +x /usr/local/bin/govless 2>/dev/null
-    fi
+    : # ярлык govless ставится из main() через install_govless_shortcut (см. фикс)
 
     # ── 7. Enable and start ───────────────────────────────────────────
     systemctl enable "$XUI_SERVICE" 2>/dev/null

@@ -1042,6 +1042,9 @@ main() {
     init_language
     print_banner
 
+    # Ярлык govless — всегда на текущий код (до early-return установки)
+    install_govless_shortcut
+
     # Чистая установка требует современную ОС; обновление уже установленного
     # goVLESS не блокируется (старые ОС продолжают получать фиксы).
     if ! { is_xui_installed && [ -f "$GOVLESS_CONFIG" ]; }; then
