@@ -148,7 +148,13 @@ install_lite() {
         if generate_reality_keypair && generate_clients "$users_count" "lite"; then
             # Create the inbound. v2.9.4's API can return non-zero even when the
             # row IS committed, so don't trust the rc — verify by result below.
-            api_create_reality_inbound "$mask_domain" || log_dim "$(t auto_config_api_note)"
+            if reality_inbound_serving; then
+                # Переустановка: Reality-inbound уже отдаёт :443 — не пересоздаём
+                # (иначе красная "port already used"), переиспользуем существующий.
+                log_dim "$(t auto_config_reuse)"
+            else
+                api_create_reality_inbound "$mask_domain" || log_dim "$(t auto_config_api_note)"
+            fi
             log_info "$(tf users_creating "$users_count")"
             # Restart x-ui so it regenerates config.json from the DB, then verify
             # xray is actually serving Reality on :443 (retry — v2 can be slow).
