@@ -553,7 +553,9 @@ MGMTEOF
     fi
 
     # Install govless convenience command
-    if [ ! -f /usr/local/bin/govless ] && [ -f "${SCRIPT_DIR:-/opt/govless-installer}/govless.sh" ]; then
+    # Всегда обновляем ярлык на ТЕКУЩИЙ код — иначе при переустановке поверх
+    # старой версии `govless` продолжал бы указывать на старый путь/код.
+    if [ -f "${SCRIPT_DIR:-/opt/govless-installer}/govless.sh" ]; then
         cat > /usr/local/bin/govless << goVLESSEOF
 #!/bin/bash
 exec bash "${SCRIPT_DIR:-/opt/govless-installer}/govless.sh" "\$@"

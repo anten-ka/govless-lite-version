@@ -1088,7 +1088,11 @@ main() {
         # First run. If a foreign 3X-UI panel is already here, offer the panel
         # gate (open / reset creds / remove+install / exit) instead of trying to
         # install on top (which cannot auto-configure someone else's panel).
-        if is_xui_installed; then
+        # Панель, которую МЫ поставили, но чья автонастройка не доехала (ещё нет
+        # config.json), оставляет /root/.govless_credentials. Это НАША недоустановка,
+        # а не чужая панель — не гоняем через foreign-gate, а идём в чистую
+        # (пере)установку/автонастройку. Гейт нужен только для реально ЧУЖОЙ панели.
+        if is_xui_installed && [ ! -f "$CREDENTIALS_FILE" ]; then
             handle_foreign_panel || exit 0
         fi
         # Откажемся ставить, если порт 443 занят другим сервисом
