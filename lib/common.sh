@@ -8,7 +8,7 @@
 # Colors, logging, spinner, apt handling, IP/geo detection, JSON config
 
 # ── Version & paths ─────────────────────────────────────────────────────
-GOVLESS_VERSION="1.3.5"
+GOVLESS_VERSION="1.3.6"
 GOVLESS_SCHEMA="1"
 GOVLESS_DIR="${GOVLESS_DIR:-/opt/govless}"
 GOVLESS_CONFIG="${GOVLESS_CONFIG:-${GOVLESS_DIR}/config.json}"
@@ -252,33 +252,48 @@ get_pkg_manager() {
 }
 
 # ── APT lock handling ───────────────────────────────────────────────────
+# Ждём, пока система освободит apt/dpkg-локи. На СВЕЖЕЗАГРУЖЕННОМ сервере
+# Ubuntu сама запускает unattended-upgrades + apt-daily(-upgrade).timer, и они
+# держат lock-frontend 10-15 минут. Прежний таймаут 120с был сильно мал:
+# установка падала с "APT lock timeout (120s)" → "apt-get update failed".
+# Ждём до 15 минут, объясняя пользователю что происходит и кто держит лок.
+APT_LOCK_TIMEOUT="${APT_LOCK_TIMEOUT:-900}"
 apt_lock_wait() {
-    local timeout="${1:-120}"
-    local elapsed=0
+    local timeout="${1:-$APT_LOCK_TIMEOUT}"
+    local elapsed=0 holder=""
     while fuser /var/lib/dpkg/lock-frontend &>/dev/null 2>&1 || \
           fuser /var/lib/apt/lists/lock &>/dev/null 2>&1; do
         if [ "$elapsed" -ge "$timeout" ]; then
-            log_error "APT lock timeout (${timeout}s)"
+            log_error "$(tf apt_lock_timeout "$timeout")"
+            log_warning "$(t apt_lock_hint)"
             return 1
         fi
-        [ "$elapsed" -eq 0 ] && log_dim "Waiting for APT lock..."
+        if [ "$elapsed" -eq 0 ]; then
+            # Кто именно держит лок (обычно unattended-upgrades)
+            holder=$(fuser -v /var/lib/dpkg/lock-frontend 2>&1 | awk 'NR>1{print $NF}' | grep -v '^$' | head -1)
+            log_dim "$(tf apt_lock_waiting "${holder:-apt}")"
+        elif [ $((elapsed % 30)) -eq 0 ]; then
+            # Живой прогресс, чтобы не выглядело зависанием
+            log_dim "$(tf apt_lock_still "$elapsed" "$timeout")"
+        fi
         sleep 2
         elapsed=$((elapsed + 2))
     done
+    [ "$elapsed" -gt 0 ] && log_success "$(t apt_lock_free)"
     return 0
 }
 
 apt_update() {
     apt_lock_wait || return 1
     # First try a normal refresh.
-    if apt-get update -qq 2>/dev/null; then
+    if apt-get -o DPkg::Lock::Timeout=300 update -qq 2>/dev/null; then
         return 0
     fi
     # A non-zero exit is usually a single broken THIRD-PARTY repo (expired GPG
     # key, 404, etc.) — e.g. pkg.cloudflare.com. That must not block installing
     # our deps from the working Ubuntu mirrors. Retry while tolerating per-repo
     # errors; succeed as long as the base archive refreshed at least once.
-    apt-get update -o APT::Update::Error-Mode=any -qq 2>/dev/null || true
+    apt-get -o DPkg::Lock::Timeout=300 update -o APT::Update::Error-Mode=any -qq 2>/dev/null || true
     # Consider it OK if the main Ubuntu archive lists are present & fresh.
     if apt-cache policy 2>/dev/null | grep -qE "ubuntu|noble|jammy|debian|/(updates|security)"; then
         log_dim "$(t apt_thirdparty_repo_warn)"
@@ -293,8 +308,8 @@ apt_install() {
     # proceed. Our deps live in the Ubuntu archive, so try a normal install
     # first, then retry telling apt to ignore unauthenticated/unsigned repo
     # errors so the working mirrors are still usable.
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >/dev/null 2>&1 && return 0
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -qq "$@" >/dev/null 2>&1 && return 0
+    DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -qq \
         -o Acquire::AllowInsecureRepositories=true \
         -o APT::Get::AllowUnauthenticated=true \
         "$@" >/dev/null 2>&1
